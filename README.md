@@ -23,7 +23,8 @@ Install `curlew.apk` from [Releases](https://github.com/vamsikalagaturu/curlew/r
 ## Build
 
 `./gradlew assembleDebug` with JDK 17+ and the Android SDK (platform 36). A release is published by
-`.github/workflows/release.yml` when `appVersion` in `app/build.gradle.kts` has no release yet.
+`.github/workflows/release.yml` when `appVersion` in `app/build.gradle.kts` has no release yet, with that
+version's section of [CHANGELOG.md](CHANGELOG.md) as its notes.
 
 ## Licence
 

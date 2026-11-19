@@ -13,6 +13,9 @@ TAG=v$VERSION
 [ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ] || { echo "commit first: the release is built from HEAD" >&2; exit 1; }
 gh release view "$TAG" -R vamsikalagaturu/curlew >/dev/null 2>&1 && { echo "$TAG exists; raise appVersion" >&2; exit 1; }
 
+NOTES=$(mktemp)
+"$HERE/notes.sh" "$VERSION" >"$NOTES"
+
 export CURLEW_KEYSTORE=${CURLEW_KEYSTORE:-$HOME/.config/curlew/release.keystore}
 [ -f "$CURLEW_KEYSTORE" ] || { echo "signing key $CURLEW_KEYSTORE is missing" >&2; exit 1; }
 
@@ -32,5 +35,5 @@ signer=$(printf '%s\n' "$certs" | sed -n 's/^.*Signer.*certificate SHA-256 diges
 OUT=$(mktemp -d)
 cp "$APK" "$OUT/curlew.apk"
 gh release create "$TAG" -R vamsikalagaturu/curlew --target "$(git -C "$REPO" rev-parse HEAD)" --title "curlew $VERSION" \
-    --generate-notes "$OUT/curlew.apk"
+    --notes-file "$NOTES" "$OUT/curlew.apk"
 echo "released $TAG"
