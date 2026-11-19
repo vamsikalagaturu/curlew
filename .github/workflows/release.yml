@@ -1,0 +1,47 @@
+# On main: when appVersion in app/build.gradle.kts has no release yet, platform/release.sh builds the APK and
+# publishes vX.Y.Z. The APK is signed with the key every earlier release used (secret CURLEW_KEYSTORE_B64), or
+# phones would refuse the update.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        id: version
+        run: |
+          v=$(sed -n 's/^val appVersion = "\([0-9.]*\)"$/\1/p' app/build.gradle.kts)
+          echo "tag=v$v" >>"$GITHUB_OUTPUT"
+          if gh release view "v$v" >/dev/null 2>&1; then echo "new=0" >>"$GITHUB_OUTPUT"; else echo "new=1" >>"$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-java@v4
+        if: steps.version.outputs.new == '1'
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.version.outputs.new == '1'
+      - name: Signing key
+        if: steps.version.outputs.new == '1'
+        env:
+          KEYSTORE: ${{ secrets.CURLEW_KEYSTORE_B64 }}
+        run: |
+          [ -n "$KEYSTORE" ] || { echo "secret CURLEW_KEYSTORE_B64 is missing" >&2; exit 1; }
+          mkdir -p ~/.config/curlew
+          echo "$KEYSTORE" | base64 -d >~/.config/curlew/release.keystore
+      - name: Release ${{ steps.version.outputs.tag }}
+        if: steps.version.outputs.new == '1'
+        run: platform/release.sh
