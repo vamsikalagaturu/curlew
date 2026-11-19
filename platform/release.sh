@@ -20,9 +20,14 @@ export CURLEW_KEYSTORE=${CURLEW_KEYSTORE:-$HOME/.config/curlew/release.keystore}
 APK=$REPO/app/build/outputs/apk/release/app-release.apk
 
 SDK=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}
-APKSIGNER=$(ls -d "$SDK"/build-tools/*/ | sort -V | tail -1)apksigner
-signer=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-[ "$signer" = "$(cat "$HERE/signing-cert.sha256")" ] || { echo "APK is not signed with the release key ($signer)" >&2; exit 1; }
+APKSIGNER=$(find "$SDK/build-tools" -maxdepth 2 -name apksigner -type f | sort -V | tail -1)
+[ -n "$APKSIGNER" ] || { echo "no apksigner under $SDK/build-tools" >&2; exit 1; }
+certs=$("$APKSIGNER" verify --print-certs "$APK")
+signer=$(printf '%s\n' "$certs" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+[ "$signer" = "$(cat "$HERE/signing-cert.sha256")" ] || {
+    printf 'APK is not signed with the release key. %s says:\n%s\n' "$APKSIGNER" "$certs" >&2
+    exit 1
+}
 
 OUT=$(mktemp -d)
 cp "$APK" "$OUT/curlew.apk"
