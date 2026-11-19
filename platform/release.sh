@@ -23,7 +23,7 @@ SDK=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}
 APKSIGNER=$(find "$SDK/build-tools" -maxdepth 2 -name apksigner -type f | sort -V | tail -1)
 [ -n "$APKSIGNER" ] || { echo "no apksigner under $SDK/build-tools" >&2; exit 1; }
 certs=$("$APKSIGNER" verify --print-certs "$APK" 2>&1)
-signer=$(printf '%s\n' "$certs" | sed -n 's/^Signer.*certificate SHA-256 digest: //p' | head -1)
+signer=$(printf '%s\n' "$certs" | sed -n 's/^.*Signer.*certificate SHA-256 digest: //p' | head -1)
 [ "$signer" = "$(cat "$HERE/signing-cert.sha256")" ] || {
     printf 'APK is not signed with the release key. %s says:\n%s\n' "$APKSIGNER" "$certs" >&2
     exit 1
