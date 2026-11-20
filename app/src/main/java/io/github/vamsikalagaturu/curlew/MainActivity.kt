@@ -163,6 +163,7 @@ class MainActivity : ComponentActivity() {
             add(Manifest.permission.READ_CALL_LOG)
             add(Manifest.permission.WRITE_CALL_LOG)
             add(Manifest.permission.READ_PHONE_STATE)
+            add(Manifest.permission.READ_PHONE_NUMBERS)
             if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
         }
         val missing = wanted.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }

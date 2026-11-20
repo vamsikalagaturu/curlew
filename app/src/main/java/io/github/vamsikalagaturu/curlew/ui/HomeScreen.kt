@@ -38,6 +38,11 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.coroutineScope
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
@@ -173,9 +178,36 @@ fun HomeScreen(
     val contactsState = rememberLazyListState()
     val pager = rememberPagerState(initialPage = tab.ordinal) { Tab.entries.size }
     val latestTab by rememberUpdatedState(tab)
+    val highlight = remember { Animatable(tab.ordinal.toFloat()) }
+    val contentAlpha = remember { Animatable(1f) }
+    val contentScale = remember { Animatable(1f) }
+    var jumping by remember { mutableStateOf(false) }
+    // A tab change from outside the pager (nav tap, intent) is a Material "fade through" rather than a slide,
+    // so a jump never drags the pages in between across the screen, and the highlight goes straight to its target.
     LaunchedEffect(tab) {
         if (tab == Tab.Recents) onRecentsSeen()
-        if (pager.currentPage != tab.ordinal) pager.animateScrollToPage(tab.ordinal)
+        val target = tab.ordinal
+        val settled = pager.currentPage == target && highlight.value == target.toFloat() &&
+            contentAlpha.value == 1f && contentScale.value == 1f
+        if (settled) return@LaunchedEffect
+        jumping = true
+        try {
+            coroutineScope {
+                launch { highlight.animateTo(target.toFloat(), tween(300)) }
+                if (pager.currentPage != target) {
+                    contentAlpha.animateTo(0f, tween(90, easing = FastOutLinearInEasing))
+                    pager.scrollToPage(target)
+                    contentScale.snapTo(0.92f)
+                }
+                launch { contentScale.animateTo(1f, tween(210, easing = LinearOutSlowInEasing)) }
+                contentAlpha.animateTo(1f, tween(210, easing = LinearOutSlowInEasing))
+            }
+        } finally {
+            jumping = false
+        }
+    }
+    LaunchedEffect(pager) {
+        snapshotFlow { pager.currentPage + pager.currentPageOffsetFraction }.collect { if (!jumping) highlight.snapTo(it) }
     }
     LaunchedEffect(pager) {
         snapshotFlow { pager.settledPage }.collect { page ->
@@ -183,7 +215,7 @@ fun HomeScreen(
         }
     }
     Scaffold(
-        bottomBar = { FloatingNav({ pager.currentPage + pager.currentPageOffsetFraction }, onTabChange, onSettings) },
+        bottomBar = { FloatingNav({ highlight.value }, onTabChange, onSettings) },
     ) { padding ->
         Column(
             Modifier
@@ -196,7 +228,17 @@ fun HomeScreen(
             } else if (update is UpdateStatus.Available) {
                 Banner("Curlew ${update.release.tag} is available.", "Update", onUpdate)
             }
-            HorizontalPager(pager, Modifier.weight(1f), key = { it }) { page ->
+            HorizontalPager(
+                pager,
+                Modifier
+                    .weight(1f)
+                    .graphicsLayer {
+                        alpha = contentAlpha.value
+                        scaleX = contentScale.value
+                        scaleY = contentScale.value
+                    },
+                key = { it },
+            ) { page ->
                 when (Tab.entries[page]) {
                     Tab.Keypad -> KeypadTab(number, contacts.orEmpty(), recents.orEmpty(), onNumberChange, onCall, onVoicemail, onEdit)
                     Tab.Recents -> RecentsTab(recents, blocked, recentsState, onCall, pick, onEdit)
@@ -545,7 +587,7 @@ private fun KeypadTab(
                 )
                 accounts.forEach { account ->
                     DropdownMenuItem(
-                        text = { Text(account.label) },
+                        text = { Text(account.display) },
                         leadingIcon = { Icon(Lucide.CardSim, null) },
                         onClick = {
                             simMenu = false
@@ -900,20 +942,13 @@ private fun GroupRow(
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         leadingContent = { Avatar(group.label, selected = selected, photo = group.photo) },
         headlineContent = {
-            val count = group.calls.size
-            val missed = if (isMissed(latest.type)) Nord.red else MaterialTheme.colorScheme.onSurface
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    group.label,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = missed,
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .then(if (group.name == null && group.number.isNotEmpty()) copy else Modifier),
-                )
-                if (count > 1) Text(" ($count)", color = missed, maxLines = 1)
-            }
+            Text(
+                group.label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = if (isMissed(latest.type)) Nord.red else MaterialTheme.colorScheme.onSurface,
+                modifier = if (group.name == null && group.number.isNotEmpty()) copy else Modifier,
+            )
         },
         supportingContent = {
             Column {

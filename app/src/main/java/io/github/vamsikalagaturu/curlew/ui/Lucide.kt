@@ -75,6 +75,7 @@ object Lucide {
     val Search by icon("m21 21-4.34-4.34", circle(11f, 11f, 8f))
     val X by icon("M18 6 6 18", "m6 6 12 12")
     val Check by icon("M20 6 9 17l-5-5")
+    val Copy by icon(rect(8f, 8f, 14f, 14f, 2f), "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2")
     val Plus by icon("M5 12h14", "M12 5v14")
     val Pencil by icon(
         "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z",

@@ -3,6 +3,36 @@
 Each release's notes are its section below; `platform/release.sh` publishes the section whose heading matches
 `appVersion` and refuses to release a version without one.
 
+## 0.2.0
+
+### Incoming calls
+
+- Swipe the handle up to answer or down to decline, with a buzz when you pass the line. Tapping no longer answers
+  or declines by accident, and the handle ignores touches while the phone is in a pocket.
+- Silence the ringtone and keep the call ringing quietly, from the call screen or the incoming call card.
+- An incoming call card over other apps while the phone is unlocked, with silence, decline and answer, instead
+  of Android's heads-up notification. Tap it for the full call screen, or drag it down. Turn it on under
+  Settings → Phone → Incoming call card, which asks for permission to display over other apps.
+
+### Call screen
+
+- New motion throughout: a glow that follows the call's state, pulsing rings and a breathing avatar while ringing
+  or dialing, a colour wash when you answer or decline, a rolling call timer, springy buttons, and a short
+  "Call ended" before the screen fades away.
+- A buzz when an outgoing call is answered.
+
+### SIM cards
+
+- Your SIM's phone number shows next to its name wherever you pick a SIM and on the call screen, when the carrier
+  stored it on the SIM. Settings → Phone lists your numbers with a copy button. This asks for the Phone numbers
+  permission.
+
+### Fixes
+
+- Tapping a tab that isn't next to the current one fades straight to it instead of sliding through the tab in
+  between.
+- Recents no longer shows a call count after each name.
+
 ## 0.1.0
 
 The first release: curlew replaces the phone app as Android's default dialer. It needs Android 10 or later.

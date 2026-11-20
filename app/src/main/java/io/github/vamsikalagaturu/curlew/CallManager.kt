@@ -2,11 +2,13 @@
 
 package io.github.vamsikalagaturu.curlew
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.PhoneAccountHandle
+import android.telecom.TelecomManager
 import android.telecom.VideoProfile
 import androidx.core.os.BundleCompat
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +31,7 @@ data class CallInfo(
     val canMerge: Boolean,
     val canSwap: Boolean,
     val accounts: List<PhoneAccountHandle>,
+    val silenced: Boolean = false,
 ) {
     val label: String get() = name ?: number.ifEmpty { "Unknown" }
 }
@@ -53,6 +56,7 @@ object CallManager {
     private val scope = MainScope()
     private val tracked = mutableListOf<Call>()
     private val names = HashMap<String, Phonebook.Caller?>()
+    private val silenced = mutableSetOf<Call>()
     private var service: CallService? = null
 
     private val _calls = MutableStateFlow<List<CallInfo>>(emptyList())
@@ -95,6 +99,7 @@ object CallManager {
     fun remove(call: Call) {
         call.unregisterCallback(callback)
         tracked -= call
+        silenced -= call
         if (tracked.isEmpty()) names.clear()
         publish()
     }
@@ -105,6 +110,15 @@ object CallManager {
 
     fun answer(call: Call) = call.answer(VideoProfile.STATE_AUDIO_ONLY)
     fun reject(call: Call) = call.reject(false, null)
+
+    // Telecom allows silenceRinger() for the default dialer without MODIFY_PHONE_STATE; the call keeps ringing silently.
+    @SuppressLint("MissingPermission")
+    fun silence(context: Context, call: Call) {
+        runCatching { context.getSystemService(TelecomManager::class.java).silenceRinger() }.onSuccess {
+            silenced += call
+            publish()
+        }
+    }
 
     // Telecom sends the text itself through the default SMS app's channel; no SMS permission is needed here.
     fun rejectWithMessage(call: Call, text: String) = call.reject(true, text)
@@ -145,7 +159,7 @@ object CallManager {
         val handle = details.accountHandle ?: return null
         val accounts = callAccounts(context)
         if (accounts.size < 2) return null
-        return accounts.firstOrNull { it.handle == handle }?.label
+        return accounts.firstOrNull { it.handle == handle }?.display
     }
 
     private fun Call.toInfo(): CallInfo {
@@ -171,6 +185,7 @@ object CallManager {
             canMerge = d.can(Call.Details.CAPABILITY_MERGE_CONFERENCE) || conferenceableCalls.isNotEmpty(),
             canSwap = d.can(Call.Details.CAPABILITY_SWAP_CONFERENCE),
             accounts = accounts,
+            silenced = this in silenced,
         )
     }
 }

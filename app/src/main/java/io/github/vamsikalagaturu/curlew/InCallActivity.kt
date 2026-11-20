@@ -4,6 +4,7 @@ package io.github.vamsikalagaturu.curlew
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.telecom.Call
@@ -16,6 +17,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import io.github.vamsikalagaturu.curlew.ui.CurlewTheme
 import io.github.vamsikalagaturu.curlew.ui.InCallScreen
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -26,6 +29,7 @@ class InCallActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= 34) overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, android.R.anim.fade_out)
         handle(intent)
         setContent {
             CurlewTheme {
@@ -33,7 +37,10 @@ class InCallActivity : ComponentActivity() {
                     onAddCall = {
                         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     },
-                    onNoCalls = ::finish,
+                    onNoCalls = {
+                        finish()
+                        if (Build.VERSION.SDK_INT < 34) overridePendingTransition(0, android.R.anim.fade_out)
+                    },
                 )
             }
         }
@@ -52,7 +59,13 @@ class InCallActivity : ComponentActivity() {
         handle(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        _visible.value = true
+    }
+
     override fun onStop() {
+        _visible.value = false
         setProximity(false)
         super.onStop()
     }
@@ -79,6 +92,9 @@ class InCallActivity : ComponentActivity() {
     companion object {
         const val ACTION_ANSWER = "io.github.vamsikalagaturu.curlew.ANSWER"
         private val LIVE_STATES = setOf(Call.STATE_ACTIVE, Call.STATE_DIALING, Call.STATE_CONNECTING)
+
+        private val _visible = MutableStateFlow(false)
+        val visible: StateFlow<Boolean> = _visible
 
         fun intent(context: Context): Intent = Intent(context, InCallActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

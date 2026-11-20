@@ -11,6 +11,7 @@ import androidx.core.app.Person
 
 object CallNotifier {
     private const val CHANNEL_INCOMING = "incoming"
+    private const val CHANNEL_INCOMING_QUIET = "incoming_quiet"
     private const val CHANNEL_ONGOING = "ongoing"
     private const val ID = 1
 
@@ -23,6 +24,10 @@ object CallNotifier {
                 enableVibration(false)
             },
         )
+        // Used while Curlew's own card or call screen shows the ringing call, so no heads-up lands on top of it.
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_INCOMING_QUIET, "Incoming calls (silent)", NotificationManager.IMPORTANCE_LOW),
+        )
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ONGOING, "Ongoing calls", NotificationManager.IMPORTANCE_LOW),
         )
@@ -32,14 +37,19 @@ object CallNotifier {
         context.getSystemService(NotificationManager::class.java).cancel(ID)
     }
 
-    fun update(context: Context, calls: List<CallInfo>) {
+    fun update(context: Context, calls: List<CallInfo>, quiet: Boolean) {
         val top = calls.firstOrNull { it.state != Call.STATE_DISCONNECTED } ?: return cancel(context)
         val ringing = top.state == Call.STATE_RINGING
         val open = PendingIntent.getActivity(
             context, 0, InCallActivity.intent(context),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val builder = NotificationCompat.Builder(context, if (ringing) CHANNEL_INCOMING else CHANNEL_ONGOING)
+        val channel = when {
+            !ringing -> CHANNEL_ONGOING
+            quiet -> CHANNEL_INCOMING_QUIET
+            else -> CHANNEL_INCOMING
+        }
+        val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(open)
             .setOngoing(true)

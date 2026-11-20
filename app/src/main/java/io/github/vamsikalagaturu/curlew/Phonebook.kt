@@ -17,6 +17,7 @@ import android.provider.ContactsContract.PhoneLookup
 import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.telephony.PhoneNumberUtils
+import android.telephony.SubscriptionManager
 import android.widget.Toast
 
 data class Contact(
@@ -187,16 +188,38 @@ fun Context.dial(number: String, account: PhoneAccountHandle? = null) {
     if (!handled) placeCall(number, account)
 }
 
-data class CallAccount(val key: String, val handle: PhoneAccountHandle, val label: String)
+data class CallAccount(val key: String, val handle: PhoneAccountHandle, val label: String, val number: String? = null) {
+    val display: String get() = listOfNotNull(label, number?.let(::formatNumber)).joinToString(" · ")
+}
 
 fun callAccounts(context: Context): List<CallAccount> = try {
     val telecom = context.getSystemService(TelecomManager::class.java)
     telecom.callCapablePhoneAccounts.map { handle ->
-        val label = telecom.getPhoneAccount(handle)?.label?.toString()?.takeIf { it.isNotBlank() } ?: handle.id
-        CallAccount("${handle.componentName.flattenToString()}|${handle.id}", handle, label)
+        val account = telecom.getPhoneAccount(handle)
+        val label = account?.label?.toString()?.takeIf { it.isNotBlank() } ?: handle.id
+        val number = simNumber(context, handle) ?: account?.address?.schemeSpecificPart
+        CallAccount("${handle.componentName.flattenToString()}|${handle.id}", handle, label, number?.takeIf { it.isNotBlank() })
     }
 } catch (_: SecurityException) {
     emptyList()
+}
+
+// Carriers often leave the number off the SIM, so this is null for many SIMs even with READ_PHONE_NUMBERS granted.
+@SuppressLint("MissingPermission", "HardwareIds")
+private fun simNumber(context: Context, handle: PhoneAccountHandle): String? {
+    if (Build.VERSION.SDK_INT < 30) return null
+    if (context.checkSelfPermission(Manifest.permission.READ_PHONE_NUMBERS) != PackageManager.PERMISSION_GRANTED) return null
+    return runCatching {
+        val subId = context.getSystemService(TelephonyManager::class.java).getSubscriptionId(handle)
+        if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) return null
+        val subscriptions = context.getSystemService(SubscriptionManager::class.java)
+        if (Build.VERSION.SDK_INT >= 33) {
+            subscriptions.getPhoneNumber(subId)
+        } else {
+            @Suppress("DEPRECATION")
+            subscriptions.getActiveSubscriptionInfo(subId)?.number
+        }
+    }.getOrNull()?.takeIf { it.isNotBlank() }
 }
 
 fun Context.copyNumber(number: String) {

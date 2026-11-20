@@ -59,6 +59,7 @@ import androidx.compose.material3.TextFieldDefaults
 import io.github.vamsikalagaturu.curlew.ContactWriter
 import io.github.vamsikalagaturu.curlew.R
 import io.github.vamsikalagaturu.curlew.callAccounts
+import io.github.vamsikalagaturu.curlew.copyNumber
 import io.github.vamsikalagaturu.curlew.formatNumber
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -87,6 +88,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.ui.res.painterResource
 import androidx.core.net.toUri
+import androidx.lifecycle.compose.LifecycleResumeEffect
 
 private enum class Page { Blocked, SpeedDial }
 
@@ -379,6 +381,11 @@ fun SettingsScreen(onClose: () -> Unit) {
     val unknownCallers by prefs.unknownCallers.collectAsState()
     val blockPrivate by prefs.blockPrivate.collectAsState()
     val accounts = remember { callAccounts(context) }
+    var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    LifecycleResumeEffect(Unit) {
+        canOverlay = Settings.canDrawOverlays(context)
+        onPauseOrDispose { }
+    }
     var page by rememberSaveable { mutableStateOf<Page?>(null) }
     val scope = rememberCoroutineScope()
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/x-vcard")) { uri ->
@@ -443,15 +450,35 @@ fun SettingsScreen(onClose: () -> Unit) {
                 Link(Lucide.Phone, "Default phone app", "Choose which app handles calls") {
                     open(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
                 }
+                Link(
+                    Lucide.PhoneCall,
+                    "Incoming call card",
+                    if (canOverlay) "On: a card over other apps while unlocked" else "Off: allow Curlew to display over other apps",
+                ) {
+                    open(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri()))
+                }
                 Link(Lucide.Music, "Ringtone and sounds", "System sound settings") {
                     open(Intent(Settings.ACTION_SOUND_SETTINGS))
                 }
                 if (accounts.size > 1) {
                     ChoiceRow(Lucide.CardSim, "Call with") {
                         val keys = listOf("") + accounts.map { it.key }
-                        val labels = listOf("Phone default") + accounts.map { it.label }
+                        val labels = listOf("Phone default") + accounts.map { it.display }
                         RadioList(labels, keys.indexOf(callAccount).coerceAtLeast(0)) { prefs.setCallAccount(keys[it]) }
                     }
+                }
+                accounts.forEach { account ->
+                    val number = account.number ?: return@forEach
+                    ListItem(
+                        modifier = Modifier.clickable { context.copyNumber(number) },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        leadingContent = { SettingIcon(Lucide.CardSim) },
+                        headlineContent = { Text(formatNumber(number)) },
+                        supportingContent = { Text("Your number on ${account.label}") },
+                        trailingContent = {
+                            IconButton(onClick = { context.copyNumber(number) }) { Icon(Lucide.Copy, "Copy number") }
+                        },
+                    )
                 }
                 Link(Lucide.PhoneForwarded, "Carrier call settings", "Forwarding, call waiting, caller ID") {
                     open(Intent(TelecomManager.ACTION_SHOW_CALL_SETTINGS))
