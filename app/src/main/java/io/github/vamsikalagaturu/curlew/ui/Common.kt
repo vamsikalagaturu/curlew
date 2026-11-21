@@ -231,7 +231,7 @@ private object Photos {
 }
 
 @Composable
-fun Avatar(label: String, size: Dp = 40.dp, selected: Boolean = false, photo: String? = null) {
+fun Avatar(label: String, size: Dp = 40.dp, selected: Boolean = false, photo: String? = null, bare: Boolean = false) {
     val context = LocalContext.current
     val image by produceState(photo?.let(Photos::cached), photo) {
         if (photo != null && value == null) value = withContext(Dispatchers.IO) { Photos.load(context, photo) }
@@ -258,7 +258,7 @@ fun Avatar(label: String, size: Dp = 40.dp, selected: Boolean = false, photo: St
         Modifier
             .size(size)
             .clip(CircleShape)
-            .background(background),
+            .then(if (bare) Modifier else Modifier.background(background)),
         contentAlignment = Alignment.Center,
     ) {
         if (selected) {

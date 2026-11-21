@@ -73,6 +73,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -93,6 +94,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.geometry.lerp
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -112,6 +115,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.vamsikalagaturu.curlew.CallInfo
 import io.github.vamsikalagaturu.curlew.CallManager
 import io.github.vamsikalagaturu.curlew.callAccounts
+import io.github.vamsikalagaturu.curlew.formatNumber
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.ui.unit.sp
 import io.github.vamsikalagaturu.curlew.stateLabel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -170,12 +177,41 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
     var dtmf by rememberSaveable(primary.call.hashCode()) { mutableStateOf("") }
 
     val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val pools = remember { AuroraPools() }
+    var merging by remember { mutableStateOf(false) }
+    // The handle's glow carries on into the next screen: on answer it flies up into the avatar's glow, where the
+    // shockwave fires as they meet; on decline it sinks and fades.
+    fun fly(answer: Boolean) {
+        val from = pools.handle
+        val fromRadius = pools.handleRadius
+        val fromStrength = pools.handleStrength.coerceAtLeast(0.6f)
+        val to = if (answer) pools.avatar else from + Offset(0f, with(density) { 160.dp.toPx() })
+        val toRadius = if (answer) pools.avatarRadius else fromRadius * 0.5f
+        merging = answer
+        scope.launch {
+            animate(0f, 1f, animationSpec = tween(if (answer) 560 else 420, easing = FastOutSlowInEasing)) { v, _ ->
+                pools.handle = lerp(from, to, v)
+                pools.handleRadius = fromRadius + (toRadius - fromRadius) * v
+                pools.handleStrength = fromStrength * if (answer) 1f - v * v else 1f - v
+            }
+            pools.handleStrength = 0f
+            merging = false
+        }
+    }
+    val burst = remember { Animatable(0f) }
     var previous by remember(primary.call) { mutableIntStateOf(primary.state) }
     LaunchedEffect(primary.call, primary.state) {
         val from = previous
         previous = primary.state
         if (primary.state == Call.STATE_ACTIVE && (from in OUTGOING || from == Call.STATE_RINGING)) {
             if (from in OUTGOING) haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+            if (merging) delay(400)
+            launch {
+                burst.snapTo(0.001f)
+                burst.animateTo(1f, tween(900, easing = LinearOutSlowInEasing))
+            }
             avatarPop.animateTo(1.15f, tween(140, easing = FastOutSlowInEasing))
             avatarPop.animateTo(1f, spring(dampingRatio = 0.35f, stiffness = Spring.StiffnessMediumLow))
         }
@@ -196,6 +232,27 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
         tween(700),
         label = "tint",
     )
+    val accent by animateColorAsState(
+        when {
+            ended -> Nord.orange
+            primary.state == Call.STATE_ACTIVE -> Nord.frost0
+            primary.state == Call.STATE_RINGING -> Nord.green
+            else -> Nord.purple
+        },
+        tween(700),
+        label = "accent",
+    )
+    val energy by animateFloatAsState(
+        when {
+            ended -> 0f
+            waiting -> 1f
+            else -> 0.3f
+        },
+        tween(900),
+        label = "energy",
+    )
+    val time = rememberFrameTime()
+    SideEffect { pools.avatarStrength = 0.3f + 0.35f * energy }
     val ambient = rememberInfiniteTransition(label = "ambient")
     val breathe by ambient.animateFloat(
         initialValue = 0f,
@@ -222,9 +279,16 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
             .drawWithContent {
                 drawContent()
                 reveal?.let { r ->
+                    val radius = (revealGrow.value * size.maxDimension * 1.25f).coerceAtLeast(1f)
                     drawCircle(
-                        r.color.copy(alpha = 0.4f * revealFade.value),
-                        radius = revealGrow.value * size.maxDimension * 1.25f,
+                        Brush.radialGradient(
+                            0f to r.color.copy(alpha = 0.10f * revealFade.value),
+                            0.7f to r.color.copy(alpha = 0.22f * revealFade.value),
+                            1f to Color.Transparent,
+                            center = r.origin,
+                            radius = radius,
+                        ),
+                        radius = radius,
                         center = r.origin,
                     )
                 }
@@ -233,16 +297,7 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
         Column(
             Modifier
                 .fillMaxSize()
-                .drawBehind {
-                    val glow = if (waiting) 0.20f + 0.12f * breathe else 0.16f
-                    drawRect(
-                        Brush.radialGradient(
-                            listOf(tint.copy(alpha = glow), Color.Transparent),
-                            center = Offset(size.width / 2f, size.height * 0.2f),
-                            radius = size.width * (0.85f + 0.15f * breathe),
-                        ),
-                    )
-                }
+                .aurora({ time.value }, { energy }, colors.surface, { tint }, { accent }, pools)
                 .systemBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -259,31 +314,43 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
             }
             Spacer(Modifier.height(32.dp))
             Column(Modifier.rise(header), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(contentAlignment = Alignment.Center) {
-                    PulseRings(tint, visible = waiting)
-                    Box(
-                        Modifier.graphicsLayer {
-                            val s = avatarPop.value * (if (waiting) 1f + 0.05f * breathe else 1f)
+                Spacer(Modifier.height(24.dp))
+                Box(
+                    Modifier
+                        .onGloballyPositioned {
+                            pools.avatar = it.boundsInRoot().center
+                            pools.avatarRadius = it.size.width / 2f
+                        }
+                        .liquidHalo({ time.value }, { energy }, { burst.value }, { tint }, { accent })
+                        .graphicsLayer {
+                            val s = avatarPop.value * (if (waiting) 1f + 0.04f * breathe else 1f)
                             scaleX = s
                             scaleY = s
                             alpha = if (ended) 0.7f else 1f
                         },
-                    ) {
-                        Avatar(primary.label, size = 96.dp, photo = primary.photo)
-                    }
+                ) {
+                    Avatar(primary.label, size = 104.dp, photo = primary.photo, bare = true)
                 }
-                Spacer(Modifier.height(16.dp))
-                AnimatedContent(primary.label, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "name") { name ->
-                    Text(
+                Spacer(Modifier.height(40.dp))
+                val title = primary.name ?: primary.number.takeIf { it.isNotEmpty() }?.let(::formatNumber) ?: primary.label
+                val titleStyle = MaterialTheme.typography.headlineMedium
+                AnimatedContent(
+                    title,
+                    transitionSpec = { fadeIn() togetherWith fadeOut() },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "name",
+                ) { name ->
+                    BasicText(
                         name,
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = titleStyle.copy(color = colors.onSurface, textAlign = TextAlign.Center),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
+                        autoSize = TextAutoSize.StepBased(minFontSize = 20.sp, maxFontSize = titleStyle.fontSize),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
                 if (primary.name != null && primary.number.isNotEmpty()) {
-                    Text(primary.number, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+                    Text(formatNumber(primary.number), style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
                 }
                 Spacer(Modifier.height(4.dp))
                 val statusStyle = MaterialTheme.typography.titleMedium
@@ -297,10 +364,10 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
                         },
                         label = "status",
                     ) { s ->
-                        if (s == null) {
-                            RollingText(elapsed(primary.connectedAt), statusStyle, statusColor)
-                        } else {
-                            Text(s, style = statusStyle, color = statusColor)
+                        when {
+                            s == null -> RollingText(elapsed(primary.connectedAt), statusStyle, statusColor)
+                            s.endsWith("…") -> WaitingText(s.removeSuffix("…"), statusStyle, statusColor)
+                            else -> Text(s, style = statusStyle, color = statusColor)
                         }
                     }
                 }
@@ -343,9 +410,16 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
                             val covered = rememberCovered()
                             SwipeToAnswer(
                                 enabled = !covered,
+                                pools = pools,
                                 onReveal = { reveal = it },
-                                onAnswer = { CallManager.answer(primary.call) },
-                                onDecline = { CallManager.reject(primary.call) },
+                                onAnswer = {
+                                    fly(answer = true)
+                                    CallManager.answer(primary.call)
+                                },
+                                onDecline = {
+                                    fly(answer = false)
+                                    CallManager.reject(primary.call)
+                                },
                             )
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -436,7 +510,13 @@ private fun rememberCovered(): Boolean {
 }
 
 @Composable
-private fun SwipeToAnswer(enabled: Boolean, onReveal: (Reveal) -> Unit, onAnswer: () -> Unit, onDecline: () -> Unit) {
+private fun SwipeToAnswer(
+    enabled: Boolean,
+    pools: AuroraPools,
+    onReveal: (Reveal) -> Unit,
+    onAnswer: () -> Unit,
+    onDecline: () -> Unit,
+) {
     val haptics = LocalHapticFeedback.current
     val colors = MaterialTheme.colorScheme
     val travel = 112.dp
@@ -456,12 +536,7 @@ private fun SwipeToAnswer(enabled: Boolean, onReveal: (Reveal) -> Unit, onAnswer
         animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "bob",
     )
-    val halo by idle.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1600, easing = LinearOutSlowInEasing)),
-        label = "halo",
-    )
+    val time = rememberFrameTime()
     val flow by idle.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
@@ -477,10 +552,14 @@ private fun SwipeToAnswer(enabled: Boolean, onReveal: (Reveal) -> Unit, onAnswer
     }
     // Negative is up (answer), positive is down (decline).
     val progress = (offset / threshold).coerceIn(-1f, 1f)
-    val handle = when {
-        progress < 0f -> lerp(colors.surfaceContainerHighest, Nord.green, -progress)
-        else -> lerp(colors.surfaceContainerHighest, Nord.red, progress)
+    // Once a swipe completes, the pool belongs to the caller's flight animation, which carries it off this handle.
+    SideEffect {
+        if (!done) {
+            pools.handleStrength = if (enabled) 0.3f + 0.5f * abs(progress) else 0f
+            pools.handleTint = if (progress > 0f) Nord.red else Nord.green
+        }
     }
+    DisposableEffect(Unit) { onDispose { if (!done) pools.handleStrength = 0f } }
     val iconTint = if (abs(progress) > 0.5f) Nord.night0 else colors.onSurface
     val resting = offset == 0f && enabled && !done
 
@@ -503,32 +582,41 @@ private fun SwipeToAnswer(enabled: Boolean, onReveal: (Reveal) -> Unit, onAnswer
                 .align(Alignment.BottomCenter)
                 .graphicsLayer { alpha = 1f + progress.coerceAtMost(0f) },
         )
-        Box(
-            Modifier
-                .size(72.dp)
-                .graphicsLayer {
-                    val s = 1f + halo * 0.6f
-                    scaleX = s
-                    scaleY = s
-                    alpha = if (resting) (1f - halo) * 0.5f else 0f
-                }
-                .background(Nord.green, CircleShape),
-        )
         Surface(
             shape = CircleShape,
-            color = handle,
-            shadowElevation = 6.dp,
+            color = Color.Transparent,
             modifier = Modifier
                 .size(72.dp)
                 .offset {
                     val hint = if (resting) -bob * 10.dp.toPx() else 0f
                     IntOffset(0, (offset + hint).roundToInt())
                 }
+                .then(
+                    if (enabled && !done) {
+                        Modifier.liquidHalo(
+                            time = { time.value },
+                            energy = { 0.6f + 0.4f * abs(progress) },
+                            burst = { 0f },
+                            tint = { if (progress > 0f) Nord.red else Nord.green },
+                            accent = { if (progress > 0f) Nord.orange else Nord.frost1 },
+                            reach = 2.2f,
+                            pattern = HaloPattern.Ripples,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
                 .graphicsLayer {
                     scaleX = lift
                     scaleY = lift
                 }
-                .onGloballyPositioned { center = it.boundsInRoot().center }
+                .onGloballyPositioned {
+                    center = it.boundsInRoot().center
+                    if (!done) {
+                        pools.handle = center
+                        pools.handleRadius = it.size.width / 2f
+                    }
+                }
                 .draggable(
                     drag,
                     Orientation.Vertical,
@@ -643,6 +731,7 @@ private fun CardContent(
     onDrag: (Float) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val time = rememberFrameTime()
     val motion = rememberInfiniteTransition(label = "card")
     val wiggle by motion.animateFloat(
         initialValue = 0f,
@@ -676,8 +765,7 @@ private fun CardContent(
             },
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(contentAlignment = Alignment.Center) {
-                PulseRings(Nord.green, visible = true, size = 48.dp)
+            Box(Modifier.liquidHalo({ time.value }, { 1f }, { 0f }, { Nord.green }, { Nord.frost1 }, reach = 1.7f, fill = true)) {
                 Avatar(info.label, size = 48.dp, photo = info.photo)
             }
             Column(
@@ -783,30 +871,27 @@ private fun QuickReplies(onSend: (String) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun PulseRings(color: Color, visible: Boolean, size: Dp = 96.dp) {
-    AnimatedVisibility(visible, enter = fadeIn(tween(300)), exit = fadeOut(tween(500))) {
-        val pulse = rememberInfiniteTransition(label = "pulse")
-        val progress by pulse.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart),
-            label = "rings",
-        )
-        Box(contentAlignment = Alignment.Center) {
-            repeat(3) { i ->
-                Box(
-                    Modifier
-                        .size(size)
-                        .graphicsLayer {
-                            val phase = (progress + i / 3f) % 1f
-                            val scale = 1f + LinearOutSlowInEasing.transform(phase) * 0.75f
-                            scaleX = scale
-                            scaleY = scale
-                            alpha = (1f - phase) * 0.6f
-                        }
-                        .border(2.dp, color, CircleShape),
-                )
-            }
+private fun WaitingText(text: String, style: TextStyle, color: Color) {
+    val dots = rememberInfiniteTransition(label = "dots")
+    val progress by dots.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing)),
+        label = "dots",
+    )
+    Row {
+        Text(text, style = style, color = color)
+        repeat(3) { i ->
+            Text(
+                ".",
+                style = style,
+                color = color,
+                modifier = Modifier.graphicsLayer {
+                    val phase = progress - i * 0.15f
+                    val hop = if (phase in 0f..0.3f) sin(phase / 0.3f * PI.toFloat()) else 0f
+                    translationY = -hop * 5.dp.toPx()
+                },
+            )
         }
     }
 }
@@ -831,7 +916,9 @@ private fun Controls(info: CallInfo, audio: CallAudioState?, onKeypad: () -> Uni
     val muted = audio?.isMuted == true
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            ControlButton(Lucide.MicOff, "Mute", index = 0, checked = muted) { CallManager.setMuted(!muted) }
+            ControlButton(Lucide.MicOff, "Mute", index = 0, checked = muted, effect = HaloPattern.Hush, onColor = Nord.red) {
+                CallManager.setMuted(!muted)
+            }
             ControlButton(Lucide.Keypad, "Keypad", index = 1, onClick = onKeypad)
             AudioRouteButton(audio, index = 2)
         }
@@ -858,10 +945,14 @@ private fun AudioRouteButton(audio: CallAudioState?, index: Int) {
     var menu by remember { mutableStateOf(false) }
     Box {
         if (bluetooth) {
-            ControlButton(routeIcon(route), routeName(route), index, checked = route != CallAudioState.ROUTE_EARPIECE) { menu = true }
+            ControlButton(
+                routeIcon(route), routeName(route), index,
+                checked = route != CallAudioState.ROUTE_EARPIECE,
+                effect = HaloPattern.Waves,
+            ) { menu = true }
         } else {
             val speaker = route == CallAudioState.ROUTE_SPEAKER
-            ControlButton(Lucide.Volume2, "Speaker", index, checked = speaker) {
+            ControlButton(Lucide.Volume2, "Speaker", index, checked = speaker, effect = HaloPattern.Waves) {
                 val base = if (mask and CallAudioState.ROUTE_WIRED_HEADSET != 0) {
                     CallAudioState.ROUTE_WIRED_HEADSET
                 } else {
@@ -918,6 +1009,8 @@ private fun ControlButton(
     index: Int,
     checked: Boolean = false,
     enabled: Boolean = true,
+    effect: HaloPattern = HaloPattern.Strands,
+    onColor: Color = MaterialTheme.colorScheme.primary,
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -929,11 +1022,19 @@ private fun ControlButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val press by animateFloatAsState(if (pressed) 0.88f else 1f, spring(dampingRatio = 0.5f), label = "press")
-    val container by animateColorAsState(if (checked) colors.primary else colors.surfaceContainerHigh, label = "container")
+    val glow by animateColorAsState(if (checked) onColor else colors.onSurface, label = "glow")
+    val strength by animateFloatAsState(
+        when {
+            !enabled -> 0.25f
+            checked -> 1.6f
+            else -> 0.7f
+        },
+        label = "strength",
+    )
     val content by animateColorAsState(
         when {
             !enabled -> colors.onSurface.copy(alpha = 0.38f)
-            checked -> colors.onPrimary
+            checked -> onColor
             else -> colors.onSurface
         },
         label = "content",
@@ -963,7 +1064,7 @@ private fun ControlButton(
             onClick = onClick,
             enabled = enabled,
             shape = CircleShape,
-            color = container,
+            color = Color.Transparent,
             contentColor = content,
             interactionSource = interaction,
             modifier = Modifier
@@ -971,7 +1072,20 @@ private fun ControlButton(
                 .graphicsLayer {
                     scaleX = press
                     scaleY = press
-                },
+                }
+                .softOrb({ glow }, { strength })
+                .then(
+                    if (checked) {
+                        val time = rememberFrameTime()
+                        Modifier.liquidHalo(
+                            { time.value }, { 0.15f }, { 0f }, { onColor }, { Nord.frost0 },
+                            reach = if (effect == HaloPattern.Strands) 1.6f else 2.1f,
+                            pattern = effect,
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
@@ -998,19 +1112,31 @@ private fun RoundAction(icon: ImageVector, label: String?, color: Color, onClick
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val press by animateFloatAsState(if (pressed) 0.88f else 1f, spring(dampingRatio = 0.5f), label = "press")
+    val time = rememberFrameTime()
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
             onClick = onClick,
             shape = CircleShape,
-            color = color,
-            contentColor = Nord.night0,
+            color = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
             interactionSource = interaction,
             modifier = Modifier
                 .size(72.dp)
                 .graphicsLayer {
                     scaleX = press
                     scaleY = press
-                },
+                }
+                .softOrb({ color }, { 1.8f })
+                .liquidHalo(
+                    time = { time.value },
+                    energy = { 0.35f },
+                    burst = { 0f },
+                    tint = { color },
+                    accent = { Nord.orange },
+                    reach = 1.9f,
+                    fill = true,
+                    pattern = HaloPattern.Ripples,
+                ),
         ) {
             Box(contentAlignment = Alignment.Center) { Icon(icon, label ?: "End call", Modifier.size(32.dp)) }
         }

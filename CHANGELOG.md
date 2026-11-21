@@ -3,6 +3,24 @@
 Each release's notes are its section below; `platform/release.sh` publishes the section whose heading matches
 `appVersion` and refuses to release a version without one.
 
+## 0.2.1
+
+### Call screen
+
+- A new look on Android 13 and later: a slowly flowing aurora in the call's colours (purple while calling, green
+  once connected, red when it ends) that glows up around the caller and the answer handle.
+- Drifting light strands and sparkles around the caller, and ripples with orbiting lights around the answer
+  handle. When you swipe up to answer, the handle's glow flies up into the caller's and the call screen rises in.
+- The in-call buttons float in the aurora instead of sitting on solid discs. Mute glows red with rings drawing
+  inward, the speaker sends out sound waves, and the hang-up button is a red orb.
+- "Calling" has bouncing dots, the call timer rolls, and long numbers are formatted and shrink to fit.
+- Android 10–12 shows a simpler soft glow instead.
+
+### Fixes
+
+- The tab bar no longer stutters: the highlight follows your finger exactly while swiping and slides smoothly
+  when you tap a tab.
+
 ## 0.2.0
 
 ### Incoming calls

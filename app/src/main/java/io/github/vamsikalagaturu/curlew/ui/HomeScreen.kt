@@ -7,6 +7,15 @@ import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.ui.graphics.lerp
 import kotlin.math.abs
+import kotlin.math.roundToInt
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.foundation.shape.GenericShape
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.LaunchedEffect
@@ -40,6 +49,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.coroutineScope
@@ -187,13 +197,13 @@ fun HomeScreen(
     LaunchedEffect(tab) {
         if (tab == Tab.Recents) onRecentsSeen()
         val target = tab.ordinal
-        val settled = pager.currentPage == target && highlight.value == target.toFloat() &&
-            contentAlpha.value == 1f && contentScale.value == 1f
+        val settled = pager.currentPage == target && !jumping && contentAlpha.value == 1f && contentScale.value == 1f
         if (settled) return@LaunchedEffect
+        if (!jumping) highlight.snapTo(pager.currentPage + pager.currentPageOffsetFraction)
         jumping = true
         try {
             coroutineScope {
-                launch { highlight.animateTo(target.toFloat(), tween(300)) }
+                launch { highlight.animateTo(target.toFloat(), tween(300, easing = FastOutSlowInEasing)) }
                 if (pager.currentPage != target) {
                     contentAlpha.animateTo(0f, tween(90, easing = FastOutLinearInEasing))
                     pager.scrollToPage(target)
@@ -207,15 +217,19 @@ fun HomeScreen(
         }
     }
     LaunchedEffect(pager) {
-        snapshotFlow { pager.currentPage + pager.currentPageOffsetFraction }.collect { if (!jumping) highlight.snapTo(it) }
-    }
-    LaunchedEffect(pager) {
         snapshotFlow { pager.settledPage }.collect { page ->
             if (page != latestTab.ordinal) onTabChange(Tab.entries[page])
         }
     }
     Scaffold(
-        bottomBar = { FloatingNav({ highlight.value }, onTabChange, onSettings) },
+        // Read straight from the pager while swiping: mirroring it into an Animatable would trail the finger by a frame.
+        bottomBar = {
+            FloatingNav(
+                { if (jumping) highlight.value else pager.currentPage + pager.currentPageOffsetFraction },
+                onTabChange,
+                onSettings,
+            )
+        },
     ) { padding ->
         Column(
             Modifier
@@ -249,6 +263,71 @@ fun HomeScreen(
     }
 }
 
+private val NAV_GAP = 4.dp
+
+private fun closeness(position: Float, index: Int) = (1f - abs(position - index)).coerceIn(0f, 1f)
+
+private fun pillShape(left: Float, width: Float) = GenericShape { size, _ ->
+    addRoundRect(RoundRect(left, 0f, left + width, size.height, CornerRadius(size.height / 2f)))
+}
+
+private class NavGeometry(val lefts: FloatArray, val widths: FloatArray, val pillLeft: Float, val pillWidth: Float)
+
+// Slot widths grow with closeness to the position; the highlight pill slides from one slot's rect to the next.
+private fun navGeometry(position: Float, total: Float, gap: Float, count: Int): NavGeometry {
+    val weights = FloatArray(count) { 1f + 1.4f * closeness(position, it) }
+    val sum = weights.sum()
+    val available = total - gap * (count - 1)
+    val widths = FloatArray(count) { available * weights[it] / sum }
+    val lefts = FloatArray(count)
+    for (i in 1 until count) lefts[i] = lefts[i - 1] + widths[i - 1] + gap
+    val from = position.toInt().coerceIn(0, count - 1)
+    val to = (from + 1).coerceAtMost(count - 1)
+    val f = (position - from).coerceIn(0f, 1f)
+    return NavGeometry(
+        lefts,
+        widths,
+        pillLeft = lefts[from] + (lefts[to] - lefts[from]) * f,
+        pillWidth = widths[from] + (widths[to] - widths[from]) * f,
+    )
+}
+
+// One slot's icon and label. It is drawn twice with identical geometry: dim everywhere, and lit clipped to the
+// highlight, so whatever the sliding pill covers turns lit, even halfway, and the two can never drift apart.
+@Composable
+private fun NavContent(item: Tab, closeness: () -> Float, lit: Boolean, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val tint = if (lit) colors.onPrimary else colors.onSurfaceVariant
+    Layout(
+        content = {
+            Icon(item.icon, null, tint = tint)
+            Text(item.label, color = tint, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+        },
+        modifier = modifier,
+    ) { measurables, constraints ->
+        val loose = Constraints(maxHeight = constraints.maxHeight)
+        val (icon, label) = measurables.map { it.measure(loose) }
+        val gap = 8.dp.toPx()
+        val needed = gap + label.width
+        // The label opens over the last half of the approach, in only as much room as the slot has grown, and
+        // fades in only once it fits whole, so no letters are ever cut off.
+        val room = (constraints.maxWidth - icon.width - 2 * 12.dp.toPx()).coerceAtLeast(0f)
+        val grow = ((closeness() - 0.5f) / 0.5f).coerceIn(0f, 1f)
+        val shown = grow * minOf(room, needed)
+        val fits = ((room - needed) / 8.dp.toPx() + 1f).coerceIn(0f, 1f)
+        val reveal = grow * fits
+        val x = ((constraints.maxWidth - (icon.width + shown)) / 2f).roundToInt()
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            icon.place(x, (constraints.maxHeight - icon.height) / 2)
+            if (lit && reveal > 0.02f) {
+                label.placeWithLayer((x + icon.width + gap).roundToInt(), (constraints.maxHeight - label.height) / 2) {
+                    alpha = reveal
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun FloatingNav(position: () -> Float, onTabChange: (Tab) -> Unit, onSettings: () -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -268,38 +347,53 @@ private fun FloatingNav(position: () -> Float, onTabChange: (Tab) -> Unit, onSet
                 .weight(1f)
                 .height(64.dp),
         ) {
-            Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                // The highlight follows the pager's live scroll position, so it moves with the finger mid-swipe.
-                val at = position()
-                Tab.entries.forEach { item ->
-                    val closeness = (1f - abs(at - item.ordinal)).coerceIn(0f, 1f)
-                    val active = closeness > 0.5f
-                    val background = colors.primary.copy(alpha = closeness)
-                    val foreground = lerp(colors.onSurfaceVariant, colors.onPrimary, closeness)
-                    Row(
-                        Modifier
-                            .weight(1f + 1.4f * closeness)
-                            .fillMaxHeight()
-                            .clip(CircleShape)
-                            .background(background)
-                            .clickable { onTabChange(item) }
-                            .semantics { contentDescription = item.label },
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(item.icon, null, tint = foreground)
-                        AnimatedVisibility(
-                            visible = active,
-                            enter = expandHorizontally() + fadeIn(),
-                            exit = shrinkHorizontally() + fadeOut(),
-                        ) {
-                            Text(
-                                item.label,
-                                color = foreground,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
+            // Every frame of a swipe or tap only re-runs layout and draw: position() is never read during composition,
+            // and widths, highlight and labels all derive from that one value so nothing animates on its own clock.
+            val count = Tab.entries.size
+            Layout(
+                content = {
+                    Tab.entries.forEach { item ->
+                        val near = { closeness(position(), item.ordinal) }
+                        NavContent(
+                            item,
+                            near,
+                            lit = false,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { onTabChange(item) }
+                                .semantics { contentDescription = item.label },
+                        )
+                        NavContent(item, near, lit = true)
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(6.dp)
+                    .drawBehind {
+                        val g = navGeometry(position(), size.width, NAV_GAP.toPx(), count)
+                        drawRoundRect(
+                            colors.primary,
+                            topLeft = Offset(g.pillLeft, 0f),
+                            size = Size(g.pillWidth, size.height),
+                            cornerRadius = CornerRadius(size.height / 2f),
+                        )
+                    },
+            ) { measurables, constraints ->
+                val g = navGeometry(position(), constraints.maxWidth.toFloat(), NAV_GAP.toPx(), count)
+                val placeables = measurables.mapIndexed { i, m ->
+                    m.measure(Constraints.fixed(g.widths[i / 2].roundToInt(), constraints.maxHeight))
+                }
+                layout(constraints.maxWidth, constraints.maxHeight) {
+                    placeables.forEachIndexed { i, p ->
+                        val x = g.lefts[i / 2].roundToInt()
+                        if (i % 2 == 0) {
+                            p.place(x, 0)
+                        } else {
+                            val pill = pillShape(g.pillLeft - x, g.pillWidth)
+                            p.placeWithLayer(x, 0) {
+                                clip = true
+                                shape = pill
+                            }
                         }
                     }
                 }
