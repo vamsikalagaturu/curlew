@@ -22,6 +22,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 
@@ -90,17 +92,23 @@ fun Modifier.aurora(
 ): Modifier = if (shaders) {
     auroraShader(time, energy, base, tint, accent, pools)
 } else {
-    drawBehind {
-        drawRect(base)
-        drawRect(
-            Brush.radialGradient(
-                listOf(tint().copy(alpha = 0.18f), Color.Transparent),
-                center = Offset(size.width / 2f, size.height * 0.2f),
-                radius = size.width * 0.9f,
-            ),
-        )
-    }
+    drawBehind { auroraFallback(base, tint()) }
 }
+
+private fun DrawScope.auroraFallback(base: Color, tint: Color) {
+    drawRect(base)
+    drawRect(
+        Brush.radialGradient(
+            listOf(tint.copy(alpha = 0.18f), Color.Transparent),
+            center = Offset(size.width / 2f, size.height * 0.2f),
+            radius = size.width * 0.9f,
+        ),
+    )
+}
+
+// RuntimeShader throws on a software canvas, and Android can draw any window in software: a frame where the
+// hardware renderer failed to initialise, or a software snapshot of the view. A crash there kills the InCallService.
+private fun DrawScope.hardwareAccelerated() = drawContext.canvas.nativeCanvas.isHardwareAccelerated
 
 enum class HaloPattern {
     /** Three wobbling rings that thin out and fade along their length, with sparkles drifting outward. */
@@ -114,6 +122,9 @@ enum class HaloPattern {
 
     /** Rings drawing inward and fading as they reach the edge: sound pulled in, for mute. */
     Hush,
+
+    /** A steady rim with one soft arc of light circling it slowly: present, but never pulsing. */
+    Orbit,
 }
 
 /**
@@ -132,20 +143,22 @@ fun Modifier.liquidHalo(
 ): Modifier = if (shaders) {
     haloShader(time, energy, burst, tint, accent, reach, fill, pattern)
 } else {
-    drawBehind {
-        val inner = size.minDimension / 2f
-        val outer = inner * (1.8f + 0.3f * energy())
-        drawCircle(
-            Brush.radialGradient(
-                0f to tint().copy(alpha = 0.45f),
-                inner / outer to tint().copy(alpha = 0.3f),
-                1f to Color.Transparent,
-                center = center,
-                radius = outer,
-            ),
+    drawBehind { haloFallback(tint(), energy()) }
+}
+
+private fun DrawScope.haloFallback(tint: Color, energy: Float) {
+    val inner = size.minDimension / 2f
+    val outer = inner * (1.8f + 0.3f * energy)
+    drawCircle(
+        Brush.radialGradient(
+            0f to tint.copy(alpha = 0.45f),
+            inner / outer to tint.copy(alpha = 0.3f),
+            1f to Color.Transparent,
+            center = center,
             radius = outer,
-        )
-    }
+        ),
+        radius = outer,
+    )
 }
 
 @RequiresApi(33)
@@ -160,6 +173,7 @@ private fun Modifier.auroraShader(
     val shader = RuntimeShader(AURORA)
     val brush = ShaderBrush(shader)
     onDrawBehind {
+        if (!hardwareAccelerated()) return@onDrawBehind auroraFallback(base, tint())
         shader.setFloatUniform("size", size.width, size.height)
         shader.setFloatUniform("time", time())
         shader.setFloatUniform("energy", energy())
@@ -189,6 +203,7 @@ private fun Modifier.haloShader(
     val radius = size.minDimension / 2f
     val extent = radius * reach
     onDrawBehind {
+        if (!hardwareAccelerated()) return@onDrawBehind haloFallback(tint(), energy())
         shader.setFloatUniform("center", center.x, center.y)
         shader.setFloatUniform("radius", radius)
         shader.setFloatUniform("reach", reach)
@@ -279,7 +294,15 @@ half4 main(float2 xy) {
     half3 col = half3(0.0);
     float alpha = 0.0;
 
-    if (mode > 2.5) {
+    if (mode > 3.5) {
+        // Orbit: the arc's head leads, its tail fades behind it; the head is softened so it has no hard front edge.
+        float rim = exp(-abs(rr - radius * 1.08) / (radius * 0.05)) * 0.3;
+        float behind = mod(time * 0.9 - ang, 6.2831853);
+        float trail = exp(-behind / 1.4) * smoothstep(0.0, 0.25, behind);
+        float arc = exp(-abs(rr - radius * 1.1) / (radius * 0.06)) * trail * 0.9;
+        col += tint.rgb * half(rim) + mix(accent.rgb, tint.rgb, half(behind / 6.2831853)) * half(arc);
+        alpha += rim + arc;
+    } else if (mode > 2.5) {
         // Hush: rings start out wide and draw inward, brightening as they close in, gone as they reach the edge.
         for (int i = 0; i < 3; i++) {
             float fi = float(i);

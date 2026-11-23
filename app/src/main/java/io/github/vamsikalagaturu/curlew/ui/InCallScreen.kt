@@ -92,6 +92,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.geometry.lerp
@@ -349,9 +350,6 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                if (primary.name != null && primary.number.isNotEmpty()) {
-                    Text(formatNumber(primary.number), style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
-                }
                 Spacer(Modifier.height(4.dp))
                 val statusStyle = MaterialTheme.typography.titleMedium
                 if (keypad && dtmf.isNotEmpty() && !ended) {
@@ -365,7 +363,11 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
                         label = "status",
                     ) { s ->
                         when {
-                            s == null -> RollingText(elapsed(primary.connectedAt), statusStyle, statusColor)
+                            s == null -> Text(
+                                elapsed(primary.connectedAt),
+                                style = statusStyle.copy(fontFeatureSettings = "tnum"),
+                                color = statusColor,
+                            )
                             s.endsWith("…") -> WaitingText(s.removeSuffix("…"), statusStyle, statusColor)
                             else -> Text(s, style = statusStyle, color = statusColor)
                         }
@@ -395,7 +397,10 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .rise(footer)
-                    .graphicsLayer { alpha = dim }
+                    .graphicsLayer {
+                        alpha = dim
+                        compositingStrategy = CompositingStrategy.ModulateAlpha
+                    }
                     .then(if (ended) Modifier.blockTouches() else Modifier),
                 label = "phase",
             ) { shown ->
@@ -475,8 +480,11 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
     }
 }
 
+// A faded layer is drawn through an offscreen buffer the size of its bounds, which would cut off the halos that reach
+// past them; modulating each draw's alpha instead leaves them whole.
 private fun Modifier.rise(progress: Animatable<Float, *>) = graphicsLayer {
     alpha = progress.value
+    compositingStrategy = CompositingStrategy.ModulateAlpha
     translationY = (1f - progress.value) * 32.dp.toPx()
 }
 
@@ -677,26 +685,6 @@ private fun SwipeHint(text: String, color: Color, up: Boolean, flow: () -> Float
         if (up) chevrons()
         Text(text, style = MaterialTheme.typography.labelLarge, color = color)
         if (!up) chevrons()
-    }
-}
-
-@Composable
-private fun RollingText(text: String, style: TextStyle, color: Color) {
-    val digits = style.copy(fontFeatureSettings = "tnum")
-    Row {
-        text.forEachIndexed { i, c ->
-            // Keyed from the right so the seconds keep their slot when the minutes gain a digit.
-            key(text.length - i) {
-                AnimatedContent(
-                    c,
-                    transitionSpec = {
-                        (slideInVertically { it } + fadeIn()) togetherWith (slideOutVertically { -it } + fadeOut()) using
-                            SizeTransform(clip = true)
-                    },
-                    label = "digit",
-                ) { ch -> Text(ch.toString(), style = digits, color = color) }
-            }
-        }
     }
 }
 
@@ -1135,7 +1123,7 @@ private fun RoundAction(icon: ImageVector, label: String?, color: Color, onClick
                     accent = { Nord.orange },
                     reach = 1.9f,
                     fill = true,
-                    pattern = HaloPattern.Ripples,
+                    pattern = HaloPattern.Orbit,
                 ),
         ) {
             Box(contentAlignment = Alignment.Center) { Icon(icon, label ?: "End call", Modifier.size(32.dp)) }

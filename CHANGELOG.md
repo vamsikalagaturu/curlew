@@ -3,6 +3,21 @@
 Each release's notes are its section below; `platform/release.sh` publishes the section whose heading matches
 `appVersion` and refuses to release a version without one.
 
+## 0.2.2
+
+### Fixes
+
+- Curlew no longer crashes when a call comes in. The crash handed the call to Android's own phone app, which is
+  why its call notification sometimes showed up, and left a Curlew notification behind that closed straight away
+  when tapped.
+- The glows around the in-call buttons are no longer cut off while the screen fades out after a call.
+
+### Call screen
+
+- The hang-up button no longer pulses: a steady glow with one soft light slowly circling it.
+- The call timer counts without animating.
+- A saved contact's number is no longer shown under their name.
+
 ## 0.2.1
 
 ### Call screen
