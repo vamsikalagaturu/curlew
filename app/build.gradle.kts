@@ -4,7 +4,7 @@ plugins {
 }
 
 // The one place the version lives: platform/release.sh and the release workflow read it from this line.
-val appVersion = "0.2.2"
+val appVersion = "0.2.3"
 
 // Every release must be signed with this key or phones refuse the update. CI writes it from the
 // CURLEW_KEYSTORE_B64 secret; platform/release.sh checks the signer against platform/signing-cert.sha256.

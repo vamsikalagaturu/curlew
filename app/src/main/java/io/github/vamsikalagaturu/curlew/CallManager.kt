@@ -159,7 +159,7 @@ object CallManager {
         val handle = details.accountHandle ?: return null
         val accounts = callAccounts(context)
         if (accounts.size < 2) return null
-        return accounts.firstOrNull { it.handle == handle }?.display
+        return accounts.firstOrNull { it.handle == handle }?.label
     }
 
     private fun Call.toInfo(): CallInfo {

@@ -350,6 +350,9 @@ fun InCallScreen(onAddCall: () -> Unit, onNoCalls: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                if (primary.name != null && primary.number.isNotEmpty()) {
+                    Text(formatNumber(primary.number), style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+                }
                 Spacer(Modifier.height(4.dp))
                 val statusStyle = MaterialTheme.typography.titleMedium
                 if (keypad && dtmf.isNotEmpty() && !ended) {

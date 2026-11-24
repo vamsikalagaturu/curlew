@@ -3,6 +3,14 @@
 Each release's notes are its section below; `platform/release.sh` publishes the section whose heading matches
 `appVersion` and refuses to release a version without one.
 
+## 0.2.3
+
+### Call screen
+
+- The number of the person you're talking to is back under their name.
+- With more than one SIM, the call screen and the incoming call card name the SIM in use without showing your own
+  number.
+
 ## 0.2.2
 
 ### Fixes
